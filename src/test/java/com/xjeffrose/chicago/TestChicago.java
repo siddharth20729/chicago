@@ -1,5 +1,6 @@
 package com.xjeffrose.chicago;
 
+import com.xjeffrose.chicago.server.ChicagoServer;
 import java.io.File;
 import java.util.List;
 import java.util.ArrayList;
@@ -30,8 +31,10 @@ public class TestChicago {
     mapping.put("db_bind_ip", "127.0.0.1");
     mapping.put("db_port", 12000 + server_num);
     mapping.put("X509_CERT", "certs/cert.pem");
-    mapping.put("PRIVATE_KEY", "certs/privatekey.pem");
-
+    mapping.put("PRIVATE_KEY", "certs/privateKey.pem");
+    mapping.put("compaction_size", 60);
+    mapping.put("database_mode", false);
+  
     return new ChiConfig(ConfigFactory.parseMap(mapping));
   }
 

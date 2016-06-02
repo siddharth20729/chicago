@@ -25,27 +25,30 @@ import org.rocksdb.util.SizeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-class DBManager {
+public class DBManager {
   private static final Logger log = LoggerFactory.getLogger(DBManager.class);
 
   private final Options options = new Options();
   private final ReadOptions readOptions = new ReadOptions();
   private final WriteOptions writeOptions = new WriteOptions();
   private final Map<String, ColumnFamilyHandle> columnFamilies = new HashMap<>();
+  private final ChiConfig config;
 
   private RocksDB db;
 
-  DBManager(ChiConfig config) {
+  public DBManager(ChiConfig config) {
+    this.config = config;
     RocksDB.loadLibrary();
-
     configOptions();
     configReadOptions();
     configWriteOptions();
 
     try {
       File f = new File(config.getDBPath());
-      if (f.exists()) {
-        deleteDir(f);
+      if (f.exists() && !config.isGraceFullStart()) {
+        removeDB(f);
+      } else {
+        f.mkdir();
       }
       this.db = RocksDB.open(options, config.getDBPath());
     } catch (RocksDBException e) {
@@ -54,11 +57,11 @@ class DBManager {
     }
   }
 
-  void deleteDir(File file) {
+  void removeDB(File file) {
     File[] contents = file.listFiles();
     if (contents != null) {
       for (File f : contents) {
-        deleteDir(f);
+        removeDB(f);
       }
     }
     file.delete();
@@ -75,8 +78,12 @@ class DBManager {
         .setMaxWriteBufferNumber(3)
         .setMaxBackgroundCompactions(10)
         .setCompressionType(CompressionType.SNAPPY_COMPRESSION)
-        .setCompactionStyle(CompactionStyle.UNIVERSAL)
         .setEnv(env);
+    if(!config.isDatabaseMode()){
+      options.setCompactionStyle(CompactionStyle.FIFO)
+             .setMaxTableFilesSizeFIFO(config.getCompactionSize());
+    }
+
 
     options.setMemTableConfig(
         new HashLinkedListMemTableConfig()
@@ -112,6 +119,12 @@ class DBManager {
 
   private boolean createColumnFamily(byte[] name) {
     ColumnFamilyOptions columnFamilyOptions = new ColumnFamilyOptions();
+    if(!config.isDatabaseMode()){
+      columnFamilyOptions.setCompactionStyle(CompactionStyle.FIFO)
+        .setMaxTableFilesSizeFIFO(config.getCompactionSize())
+        .setDisableAutoCompactions(false);
+    }
+
     ColumnFamilyDescriptor columnFamilyDescriptor = new ColumnFamilyDescriptor(name, columnFamilyOptions);
 
     try {
@@ -185,7 +198,7 @@ class DBManager {
     return keySet;
   }
 
-  void destroy() {
+  public void destroy() {
     db.close();
   }
 

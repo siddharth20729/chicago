@@ -33,7 +33,7 @@ public class ConnectionPoolManager {
   private static final Logger log = LoggerFactory.getLogger(ChicagoClient.class);
   private final static String NODE_LIST_PATH = "/chicago/node-list";
   private static final long TIMEOUT = 1000;
-  private static boolean TIMEOUT_ENABLED = true;
+  private static boolean TIMEOUT_ENABLED = false;
 
   private final Map<String, Listener> listenerMap = new ConcurrentHashMap<>();
   private final Map<String, ChannelFuture> connectionMap = new ConcurrentHashMap<>();
@@ -44,7 +44,6 @@ public class ConnectionPoolManager {
   public ConnectionPoolManager(ZkClient zkClient) {
 
     this.zkClient = zkClient;
-    refreshPool();
   }
 
   public ConnectionPoolManager(String hostname) {
@@ -55,6 +54,7 @@ public class ConnectionPoolManager {
 
   public void start() {
     running.set(true);
+    refreshPool();
   }
 
   public void stop() {
