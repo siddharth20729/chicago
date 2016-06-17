@@ -1,5 +1,6 @@
 package com.xjeffrose.chicago;
 
+import com.google.common.primitives.Ints;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import java.io.File;
@@ -8,6 +9,9 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
+
 import org.rocksdb.ColumnFamilyDescriptor;
 import org.rocksdb.ColumnFamilyHandle;
 import org.rocksdb.ColumnFamilyOptions;
@@ -31,8 +35,11 @@ public class DBManager {
   private final Options options = new Options();
   private final ReadOptions readOptions = new ReadOptions();
   private final WriteOptions writeOptions = new WriteOptions();
-  private final Map<String, ColumnFamilyHandle> columnFamilies = new HashMap<>();
+  private final Map<String, ColumnFamilyHandle> columnFamilies = new ConcurrentHashMap<>();
   private final ChiConfig config;
+  private final String delimeter = "@@@";
+  private final HashMap<String,AtomicInteger> counter = new HashMap<>();
+
 
   private RocksDB db;
 
@@ -47,7 +54,7 @@ public class DBManager {
       File f = new File(config.getDBPath());
       if (f.exists() && !config.isGraceFullStart()) {
         removeDB(f);
-      } else {
+      } else if (!f.exists()) {
         f.mkdir();
       }
       this.db = RocksDB.open(options, config.getDBPath());
@@ -77,7 +84,7 @@ public class DBManager {
         .setWriteBufferSize(8 * SizeUnit.KB)
         .setMaxWriteBufferNumber(3)
         .setMaxBackgroundCompactions(10)
-        .setCompressionType(CompressionType.SNAPPY_COMPRESSION)
+        //.setCompressionType(CompressionType.SNAPPY_COMPRESSION)
         .setEnv(env);
     if(!config.isDatabaseMode()){
       options.setCompactionStyle(CompactionStyle.FIFO)
@@ -118,9 +125,12 @@ public class DBManager {
   }
 
   private boolean createColumnFamily(byte[] name) {
+    if (colFamilyExists(name)){
+      return true;
+    }
     ColumnFamilyOptions columnFamilyOptions = new ColumnFamilyOptions();
     if(!config.isDatabaseMode()){
-      columnFamilyOptions.setCompactionStyle(CompactionStyle.FIFO)
+      columnFamilyOptions.setCompactionStyle(CompactionStyle.UNIVERSAL)
         .setMaxTableFilesSizeFIFO(config.getCompactionSize())
         .setDisableAutoCompactions(false);
     }
@@ -129,6 +139,7 @@ public class DBManager {
 
     try {
       columnFamilies.put(new String(name), db.createColumnFamily(columnFamilyDescriptor));
+      counter.put(new String(name), new AtomicInteger(0));
       return true;
     } catch (RocksDBException e) {
       log.error("Could not create Column Family: " + new String(name), e);
@@ -144,10 +155,17 @@ public class DBManager {
       log.error("Tried to write a null value");
       return false;
     } else if (!colFamilyExists(colFam)) {
-      createColumnFamily(colFam);
+      synchronized (columnFamilies) {
+        createColumnFamily(colFam);
+      }
     }
     try {
-      db.put(columnFamilies.get(new String(colFam)), writeOptions, key, value);
+      //Insert Key/Value only if it does not exists.
+      if(!db.keyMayExist(readOptions,columnFamilies.get(new String(colFam)),key, new StringBuffer())){
+        counter.get(new String(colFam)).set(Ints.fromByteArray(key)+1);
+        log.info("Putting key/value : " + Ints.fromByteArray(key) + "/" + new String(value));
+        db.put(columnFamilies.get(new String(colFam)), writeOptions, key, value);
+      }
       return true;
     } catch (RocksDBException e) {
       log.error("Error writing record: " + new String(key), e);
@@ -210,7 +228,8 @@ public class DBManager {
       createColumnFamily(colFam);
     }
     try {
-      byte[] ts = Long.toString(System.nanoTime()).getBytes();
+      byte[] ts = Ints.toByteArray(counter.get(new String(colFam)).getAndIncrement());
+      log.info("Putting key/value : "+ Ints.fromByteArray(ts)+"/"+new String(value));
       db.put(columnFamilies.get(new String(colFam)), writeOptions, ts, value);
       return ts;
     } catch (RocksDBException e) {
@@ -244,9 +263,34 @@ public class DBManager {
         i.next();
       }
 
+      i.seekToLast();
+
+      bb.writeBytes(delimeter.getBytes());
+      bb.writeBytes(i.key());
+
       return bb.array();
     } else {
       return null;
     }
+  }
+
+  public List<String> getColFams(){
+    return new ArrayList<>(columnFamilies.keySet());
+  }
+
+  public List<byte[]> getKeys(byte[] colFam, byte[] offset){
+    RocksIterator i = db.newIterator(columnFamilies.get(new String(colFam)), readOptions);
+    List<byte[]> keySet = new ArrayList();
+    if (offset.length == 0) {
+      i.seekToFirst();
+    } else {
+      i.seek(offset);
+    }
+
+    while (i.isValid()) {
+      keySet.add(i.key());
+      i.next();
+    }
+    return keySet;
   }
 }

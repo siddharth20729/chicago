@@ -29,9 +29,14 @@ import org.slf4j.LoggerFactory;
 
 public class ChicagoTSClient extends BaseChicagoClient {
   private static final Logger log = LoggerFactory.getLogger(ChicagoTSClient.class);
+  private final static String REPLICATION_LOCK_PATH ="/chicago/replication-lock";
 
   public ChicagoTSClient(String zkConnectionString, int quorum) throws InterruptedException {
     super(zkConnectionString, quorum);
+  }
+
+  public ChicagoTSClient(String address) throws InterruptedException{
+    super(address);
   }
 
   public ListenableFuture<ChicagoStream> stream(byte[] key) throws ChicagoClientTimeoutException {
@@ -43,10 +48,12 @@ public class ChicagoTSClient extends BaseChicagoClient {
     return executor.submit(() -> {
       final ChicagoStream[] cs = new ChicagoStream[1];
         final long startTime = System.currentTimeMillis();
-        if (single_server != null) {
-        }
         try {
           List<String> hashList = rendezvousHash.get(key);
+          if(!single_server) {
+            List<String> replicationList = zkClient.list(REPLICATION_LOCK_PATH + "/" + new String(key));
+            hashList.removeAll(replicationList);
+          }
           for (String node : hashList) {
             if (node == null) {
             } else {
@@ -99,10 +106,12 @@ public class ChicagoTSClient extends BaseChicagoClient {
     return executor.submit(() -> {
       final long startTime = System.currentTimeMillis();
       ConcurrentLinkedDeque<byte[]> responseList = new ConcurrentLinkedDeque<>();
-      if (single_server != null) {
-      }
       try {
         List<String> hashList = rendezvousHash.get(key);
+        if(!single_server) {
+          List<String> replicationList = zkClient.list(REPLICATION_LOCK_PATH + "/" + new String(key));
+          hashList.removeAll(replicationList);
+        }
         for (String node : hashList) {
           if (node == null) {
           } else {
@@ -166,10 +175,17 @@ public class ChicagoTSClient extends BaseChicagoClient {
     return null;
   }
 
+  public  ListenableFuture<byte[]> _write(byte[] key, byte[] value, int _retries) throws ChicagoClientTimeoutException, ChicagoClientException {
+    return _write(null,key, value, 0);
+  }
 
-  private ListenableFuture<byte[]> _write(byte[] key, byte[] value, int _retries) throws ChicagoClientTimeoutException, ChicagoClientException {
+  public ListenableFuture<byte[]> _write(byte[] colFam, byte[] key, byte[] value) throws ChicagoClientTimeoutException, ChicagoClientException {
+    return _write(colFam ,key, value, 0);
+  }
+
+
+  private ListenableFuture<byte[]> _write(byte[] colFam, byte[] key, byte[] value, int _retries) throws ChicagoClientTimeoutException, ChicagoClientException {
     final int retries = _retries;
-
 
     final ConcurrentLinkedDeque<byte[]> responseList = new ConcurrentLinkedDeque<>();
     final ConcurrentLinkedDeque<UUID> idList = new ConcurrentLinkedDeque<>();
@@ -177,17 +193,16 @@ public class ChicagoTSClient extends BaseChicagoClient {
 
     ListeningExecutorService executor = MoreExecutors.listeningDecorator(exe);
     return executor.submit(() -> {
-
+        int dquorum = quorum;
         final long startTime = System.currentTimeMillis();
-
-        if (single_server != null) {
-//      connect(single_server, Op.WRITE, key, value, listener);
-        }
-
         try {
 
           List<String> hashList = rendezvousHash.get(key);
-
+          if(!single_server) {
+            List<String> replicationList = zkClient.list(REPLICATION_LOCK_PATH + "/" + new String(key));
+            hashList.removeAll(replicationList);
+          }
+          dquorum = hashList.size();
           for (String node : hashList) {
             if (node == null) {
 
@@ -197,7 +212,11 @@ public class ChicagoTSClient extends BaseChicagoClient {
                 exe.execute(() -> {
                     UUID id = UUID.randomUUID();
                     Listener listener = connectionPoolMgr.getListener(node); // Blocking
-                    cf.channel().writeAndFlush(new DefaultChicagoMessage(id, Op.TS_WRITE, key, null, value));
+                    if(colFam != null){
+                      cf.channel().writeAndFlush(new DefaultChicagoMessage(id, Op.WRITE, colFam, key, value));
+                    }else {
+                      cf.channel().writeAndFlush(new DefaultChicagoMessage(id, Op.TS_WRITE, key, null, value));
+                    }
                     listener.addID(id);
                     idList.add(id);
                     listenerList.add(listener);
@@ -220,7 +239,7 @@ public class ChicagoTSClient extends BaseChicagoClient {
         }
 
 
-        while (responseList.size() < quorum) {
+        while (responseList.size() < dquorum) {
           if (TIMEOUT_ENABLED && (System.currentTimeMillis() - startTime) > TIMEOUT) {
             Thread.currentThread().interrupt();
             throw new ChicagoClientTimeoutException();

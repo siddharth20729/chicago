@@ -39,12 +39,17 @@ public class ZkClient {
 
   public void register(String NODE_LIST_PATH, ChiConfig config, InetSocketAddress address) {
     try {
+      String path = NODE_LIST_PATH + "/" + address.getAddress().getHostAddress() + ":" + address.getPort();
+      if(client.checkExists().forPath(path) != null) {
+        client
+          .delete()
+          .forPath(path);
+      }
       client
         .create()
         .creatingParentsIfNeeded()
         .withMode(CreateMode.EPHEMERAL)
-        .forPath(
-                 NODE_LIST_PATH + "/" + address.getAddress().getHostAddress() + ":" + address.getPort(),
+        .forPath(path,
           ConfigSerializer.serialize(config).getBytes());
     } catch (Exception e) {
       log.error("Error registering Server", e);
@@ -54,10 +59,12 @@ public class ZkClient {
 
   public void electLeader(String ELECTION_PATH) {
     leaderSelector = new LeaderSelector(client, ELECTION_PATH, leaderListener);
-
     leaderSelector.autoRequeue();
     leaderSelector.start();
+  }
 
+  public boolean isLeader(){
+    return leaderSelector.hasLeadership();
   }
 
   public void start() throws InterruptedException {
@@ -128,6 +135,33 @@ public class ZkClient {
     }
     return null;
   }
+
+  public boolean createIfNotExist(String path, String data){
+    try {
+      if (client.checkExists().forPath(path) == null) {
+        client.create().creatingParentContainersIfNeeded().forPath(path,data.getBytes());
+      }
+    }catch(Exception e){
+      e.printStackTrace();
+      log.info(e.getLocalizedMessage());
+      //throw new exception.
+    }
+    return true;
+  }
+
+  public boolean delete(String path){
+    try {
+      if (client.checkExists().forPath(path) != null) {
+        client.delete().forPath(path);
+      }
+    }catch(Exception e){
+      e.printStackTrace();
+      log.info(e.getLocalizedMessage());
+      //throw new exception.
+    }
+    return true;
+  }
+
 
   /* package access only */
   public CuratorFramework getClient() {
