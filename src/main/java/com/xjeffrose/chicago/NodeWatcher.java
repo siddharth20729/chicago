@@ -9,6 +9,8 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+
 import org.apache.curator.framework.CuratorFramework;
 import org.apache.curator.framework.recipes.cache.TreeCacheEvent;
 import org.apache.curator.framework.recipes.cache.TreeCacheListener;
@@ -90,17 +92,18 @@ public class NodeWatcher {
                 List<byte[]> keys = dbManager.getKeys(cf.getBytes(), offset);
                 while(!Arrays.equals(keys.get(keys.size()-1),offset)) {
                   for(byte[] k : keys){
-                    log.info("Replicatng key " + Ints.fromByteArray(k) + " to " + s);
+                    log.info("Writing key :"+Ints.fromByteArray(k));
                     try {
-                      c._write(cf.getBytes(), k, dbManager.read(cf.getBytes(), k));
+                      c._write(cf.getBytes(), k, dbManager.read(cf.getBytes(), k)).get();
                     } catch (ChicagoClientTimeoutException e) {
                       e.printStackTrace();
                     } catch (ChicagoClientException e) {
                       e.printStackTrace();
+                    } catch (ExecutionException e) {
+                      e.printStackTrace();
                     }
                     offset = k;
                   }
-                  log.info("Offset = ",Ints.fromByteArray(offset));
                   keys=dbManager.getKeys(cf.getBytes(),offset);
                 }
                 zkClient.delete(REPLICATION_LOCK_PATH + "/" + cf + "/" + s);

@@ -2,6 +2,7 @@ package com.xjeffrose.chicago;
 
 import java.nio.charset.Charset;
 import java.net.InetSocketAddress;
+import java.util.ArrayList;
 import java.util.List;
 import org.apache.curator.RetryPolicy;
 import org.apache.curator.framework.CuratorFramework;
@@ -118,11 +119,13 @@ public class ZkClient {
 
   public List<String> list(String path) {
     try {
-      return client.getChildren().forPath(path);
+      if (client.checkExists().forPath(path) != null) {
+        return client.getChildren().forPath(path);
+      }
     } catch (Exception e) {
       //throw new RuntimeException(e);
     }
-    return null;
+    return new ArrayList<String>();
   }
 
   public List<String> getChildren(String path) {
@@ -139,12 +142,11 @@ public class ZkClient {
   public boolean createIfNotExist(String path, String data){
     try {
       if (client.checkExists().forPath(path) == null) {
-        client.create().creatingParentContainersIfNeeded().forPath(path,data.getBytes());
+        client.create().creatingParentsIfNeeded().forPath(path,data.getBytes());
       }
     }catch(Exception e){
-      e.printStackTrace();
-      log.info(e.getLocalizedMessage());
       //throw new exception.
+      return false;
     }
     return true;
   }
@@ -155,8 +157,6 @@ public class ZkClient {
         client.delete().forPath(path);
       }
     }catch(Exception e){
-      e.printStackTrace();
-      log.info(e.getLocalizedMessage());
       //throw new exception.
     }
     return true;
